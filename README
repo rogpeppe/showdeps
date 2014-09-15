@@ -1,0 +1,15 @@
+usage: showdeps [flags] [pkg....]\n")
+
+showdeps prints Go package dependencies of the named packages, specified
+as in the Go command (for instance ... wildcards work), one per line.
+If no packages are given, it uses the package in the current directory.
+
+By default it prints direct dependencies of the packages (and their tests)
+only, but the -a flag can be used to print all reachable dependencies.
+
+If the -from flag is specified, the package path on each line is followed
+by the paths of all the packages that depend on it.
+  -T=false: exclude test dependencies
+  -a=false: show all dependencies recursively
+  -from=false: show which dependencies are introduced by which packages
+  -stdlib=false: show stdlib dependencies
