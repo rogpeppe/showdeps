@@ -20,7 +20,7 @@ var (
 )
 
 var helpMessage = `
-usage: showdeps [flags] [pkg....]\n")
+usage: showdeps [flags] [pkg....]
 
 showdeps prints Go package dependencies of the named packages, specified
 as in the Go command (for instance ... wildcards work), one per line.
