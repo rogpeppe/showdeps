@@ -14,9 +14,9 @@ import (
 
 var (
 	noTestDeps = flag.Bool("T", false, "exclude test dependencies")
-	all        = flag.Bool("a", false, "show all dependencies recursively")
+	all        = flag.Bool("a", false, "show all dependencies recursively (only test dependencies from the root packages are shown)")
 	std        = flag.Bool("stdlib", false, "show stdlib dependencies")
-	from = flag.Bool("from", false, "show which dependencies are introduced by which packages")
+	from       = flag.Bool("from", false, "show which dependencies are introduced by which packages")
 )
 
 var helpMessage = `
@@ -54,7 +54,7 @@ func main() {
 	pkgs = gotool.ImportPaths(pkgs)
 	allPkgs := make(map[string][]string)
 	for _, pkg := range pkgs {
-		if err := findImports(pkg, allPkgs); err != nil {
+		if err := findImports(pkg, allPkgs, true); err != nil {
 			log.Fatalf("cannot find imports from %q: %v", pkg, err)
 		}
 	}
@@ -79,7 +79,7 @@ func isStdlib(pkg string) bool {
 
 // findImports recursively adds all imported packages of given
 // package (packageName) to allPkgs map.
-func findImports(packageName string, allPkgs map[string][]string) error {
+func findImports(packageName string, allPkgs map[string][]string, isRoot bool) error {
 	if packageName == "C" {
 		return nil
 	}
@@ -87,14 +87,14 @@ func findImports(packageName string, allPkgs map[string][]string) error {
 	if err != nil {
 		return fmt.Errorf("cannot find %q: %v", packageName, err)
 	}
-	for name := range imports(pkg) {
+	for name := range imports(pkg, isRoot) {
 		if !*std && isStdlib(name) || name == pkg.ImportPath {
 			continue
 		}
 		alreadyDone := allPkgs[name] != nil
 		allPkgs[name] = append(allPkgs[name], pkg.ImportPath)
 		if *all && !alreadyDone {
-			if err := findImports(name, allPkgs); err != nil {
+			if err := findImports(name, allPkgs, false); err != nil {
 				return err
 			}
 		}
@@ -108,10 +108,10 @@ func addMap(m map[string]bool, ss []string) {
 	}
 }
 
-func imports(pkg *build.Package) map[string]bool {
+func imports(pkg *build.Package, isRoot bool) map[string]bool {
 	imps := make(map[string]bool)
 	addMap(imps, pkg.Imports)
-	if !*noTestDeps {
+	if isRoot && !*noTestDeps {
 		addMap(imps, pkg.TestImports)
 		addMap(imps, pkg.XTestImports)
 	}
