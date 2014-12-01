@@ -6,6 +6,7 @@ import (
 	"go/build"
 	"log"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -17,7 +18,10 @@ var (
 	all        = flag.Bool("a", false, "show all dependencies recursively (only test dependencies from the root packages are shown)")
 	std        = flag.Bool("stdlib", false, "show stdlib dependencies")
 	from       = flag.Bool("from", false, "show which dependencies are introduced by which packages")
+	why        = flag.String("why", "", "show only packages which import directly or indirectly the specified package (implies -a)")
 )
+
+var whyMatch func(string) bool
 
 var helpMessage = `
 usage: showdeps [flags] [pkg....]
@@ -31,6 +35,10 @@ only, but the -a flag can be used to print all reachable dependencies.
 
 If the -from flag is specified, the package path on each line is followed
 by the paths of all the packages that depend on it.
+
+If the package argument to the -why flag is in the standard library,
+the -std flag is implied. The -why flag can also specify Go-command-style
+... wildcards.
 `[1:]
 
 var cwd string
@@ -51,13 +59,49 @@ func main() {
 	} else {
 		cwd = d
 	}
+	if *why != "" {
+		*all = true
+		if isStdlib(*why) {
+			*std = true
+		}
+		whyMatch = matchPattern(*why)
+	}
+
 	pkgs = gotool.ImportPaths(pkgs)
+	rootPkgs := make(map[string]bool)
+	for _, pkg := range pkgs {
+		p, err := build.Default.Import(pkg, cwd, build.FindOnly)
+		if err != nil {
+			log.Fatalf("cannot find %q: %v", pkg, err)
+		}
+		rootPkgs[p.ImportPath] = true
+	}
+
 	allPkgs := make(map[string][]string)
 	for _, pkg := range pkgs {
-		if err := findImports(pkg, allPkgs, true); err != nil {
+		if err := findImports(pkg, allPkgs, rootPkgs); err != nil {
 			log.Fatalf("cannot find imports from %q: %v", pkg, err)
 		}
 	}
+	// Delete packages specified directly on the command line.
+	for _, pkg := range pkgs {
+		delete(allPkgs, pkg)
+	}
+	if whyMatch != nil {
+		// Delete all packages that don't directly or indirectly import *why.
+		marked := make(map[string]bool)
+		for pkg := range allPkgs {
+			if whyMatch(pkg) {
+				markImporters(pkg, allPkgs, marked)
+			}
+		}
+		for pkg := range allPkgs {
+			if !marked[pkg] {
+				delete(allPkgs, pkg)
+			}
+		}
+	}
+
 	result := make([]string, 0, len(allPkgs))
 	for name := range allPkgs {
 		result = append(result, name)
@@ -65,11 +109,38 @@ func main() {
 	sort.Strings(result)
 	for _, r := range result {
 		if *from {
-			sort.Strings(allPkgs[r])
-			fmt.Printf("%s %s\n", r, strings.Join(allPkgs[r], " "))
+			from := allPkgs[r]
+			sort.Strings(from)
+			from = uniq(from)
+			fmt.Printf("%s %s\n", r, strings.Join(from, " "))
 		} else {
 			fmt.Println(r)
 		}
+	}
+}
+
+func uniq(ss []string) []string {
+	j := 0
+	prev := ""
+	for _, s := range ss {
+		if s != prev {
+			ss[j] = s
+			j++
+			prev = s
+		}
+	}
+	return ss[0:j]
+}
+
+// markImporters sets a marked entry to true for every entry in allPkgs
+// that is imported by pkg, including pkg itself.
+func markImporters(pkg string, allPkgs map[string][]string, marked map[string]bool) {
+	if marked[pkg] {
+		return
+	}
+	marked[pkg] = true // prevent infinite recursion
+	for _, imp := range allPkgs[pkg] {
+		markImporters(imp, allPkgs, marked)
 	}
 }
 
@@ -79,7 +150,7 @@ func isStdlib(pkg string) bool {
 
 // findImports recursively adds all imported packages of given
 // package (packageName) to allPkgs map.
-func findImports(packageName string, allPkgs map[string][]string, isRoot bool) error {
+func findImports(packageName string, allPkgs map[string][]string, rootPkgs map[string]bool) error {
 	if packageName == "C" {
 		return nil
 	}
@@ -87,14 +158,15 @@ func findImports(packageName string, allPkgs map[string][]string, isRoot bool) e
 	if err != nil {
 		return fmt.Errorf("cannot find %q: %v", packageName, err)
 	}
-	for name := range imports(pkg, isRoot) {
-		if !*std && isStdlib(name) || name == pkg.ImportPath {
+	allPkgs[pkg.ImportPath] = allPkgs[pkg.ImportPath] // ensure the package has an entry.
+	for name := range imports(pkg, rootPkgs[pkg.ImportPath]) {
+		if !*std && isStdlib(name) {
 			continue
 		}
 		alreadyDone := allPkgs[name] != nil
 		allPkgs[name] = append(allPkgs[name], pkg.ImportPath)
 		if *all && !alreadyDone {
-			if err := findImports(name, allPkgs, false); err != nil {
+			if err := findImports(name, allPkgs, rootPkgs); err != nil {
 				return err
 			}
 		}
@@ -102,18 +174,38 @@ func findImports(packageName string, allPkgs map[string][]string, isRoot bool) e
 	return nil
 }
 
-func addMap(m map[string]bool, ss []string) {
+func imports(pkg *build.Package, isRoot bool) map[string]bool {
+	imps := make(map[string]bool)
+	addPackages(imps, pkg.Imports)
+	if isRoot && !*noTestDeps {
+		addPackages(imps, pkg.TestImports)
+		addPackages(imps, pkg.XTestImports)
+	}
+	return imps
+}
+
+func addPackages(m map[string]bool, ss []string) {
 	for _, s := range ss {
-		m[s] = true
+		if *std || !isStdlib(s) {
+			m[s] = true
+		}
 	}
 }
 
-func imports(pkg *build.Package, isRoot bool) map[string]bool {
-	imps := make(map[string]bool)
-	addMap(imps, pkg.Imports)
-	if isRoot && !*noTestDeps {
-		addMap(imps, pkg.TestImports)
-		addMap(imps, pkg.XTestImports)
+// matchPattern(pattern)(name) reports whether
+// name matches pattern.  Pattern is a limited glob
+// pattern in which '...' means 'any string' and there
+// is no other special syntax.
+// Stolen from the go tool
+func matchPattern(pattern string) func(name string) bool {
+	re := regexp.QuoteMeta(pattern)
+	re = strings.Replace(re, `\.\.\.`, `.*`, -1)
+	// Special case: foo/... matches foo too.
+	if strings.HasSuffix(re, `/.*`) {
+		re = re[:len(re)-len(`/.*`)] + `(/.*)?`
 	}
-	return imps
+	reg := regexp.MustCompile(`^` + re + `$`)
+	return func(name string) bool {
+		return reg.MatchString(name)
+	}
 }
