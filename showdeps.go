@@ -18,7 +18,7 @@ var (
 	all        = flag.Bool("a", false, "show all dependencies recursively (only test dependencies from the root packages are shown)")
 	std        = flag.Bool("stdlib", false, "show stdlib dependencies")
 	from       = flag.Bool("from", false, "show which dependencies are introduced by which packages")
-	why        = flag.String("why", "", "show only packages which import directly or indirectly the specified package (implies -a)")
+	why        = flag.String("why", "", "show only packages which import directly or indirectly the specified package (implies -a and -from)")
 )
 
 var whyMatch func(string) bool
@@ -39,6 +39,7 @@ by the paths of all the packages that depend on it.
 If the package argument to the -why flag is in the standard library,
 the -std flag is implied. The -why flag can also specify Go-command-style
 ... wildcards.
+
 `[1:]
 
 var cwd string
@@ -61,6 +62,7 @@ func main() {
 	}
 	if *why != "" {
 		*all = true
+		*from = true
 		if isStdlib(*why) {
 			*std = true
 		}
