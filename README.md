@@ -38,7 +38,7 @@ named package. This isn't much use unless you're doing it recursively
 or you don't print the `-from` results, so `-why` implies both `-a` and
 `-from`.
 
-Finally, the -f flag causes all the Go source files to be printed.
+Finally, the `-f` flag causes all the Go source files to be printed.
 Since this is usually for whole-program greps or analysis, this also
 includes the source files in the packages specified on the command line.
 
