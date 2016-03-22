@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"go/build"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,6 +22,7 @@ var (
 	std        = flag.Bool("stdlib", false, "show stdlib dependencies")
 	from       = flag.Bool("from", false, "show which dependencies are introduced by which packages")
 	why        = flag.String("why", "", "show only packages which import directly or indirectly the specified package (implies -a and -from)")
+	files      = flag.Bool("f", false, "list Go source files instead of packages (overrides -from and -why)")
 )
 
 var whyMatch func(string) bool
@@ -30,6 +34,10 @@ showdeps prints Go package dependencies of the named packages, specified
 as in the Go command (for instance ... wildcards work), one per line.
 If no packages are given, it uses the package in the current directory.
 
+Note that testing dependencies are only considered if they are
+in the packages specified on the command line. That is testing
+dependencies are not considered transitively.
+
 By default it prints direct dependencies of the packages (and their tests)
 only, but the -a flag can be used to print all reachable dependencies.
 
@@ -40,6 +48,10 @@ If the package argument to the -why flag is in the standard library,
 the -std flag is implied. The -why flag can also specify Go-command-style
 ... wildcards.
 
+If the -f flag is provided, instead of packages, showdeps will print
+all the Go source files in the package. It also includes the
+source of the packages specified directly on the command line,
+including their test files unless the -T flag is provided.
 `[1:]
 
 var cwd string
@@ -85,21 +97,23 @@ func main() {
 			log.Fatalf("cannot find imports from %q: %v", pkg, err)
 		}
 	}
-	// Delete packages specified directly on the command line.
-	for _, pkg := range pkgs {
-		delete(allPkgs, pkg)
-	}
-	if whyMatch != nil {
-		// Delete all packages that don't directly or indirectly import *why.
-		marked := make(map[string]bool)
-		for pkg := range allPkgs {
-			if whyMatch(pkg) {
-				markImporters(pkg, allPkgs, marked)
-			}
+	if !*files {
+		// Delete packages specified directly on the command line.
+		for pkg := range rootPkgs {
+			delete(allPkgs, pkg)
 		}
-		for pkg := range allPkgs {
-			if !marked[pkg] {
-				delete(allPkgs, pkg)
+		if whyMatch != nil {
+			// Delete all packages that don't directly or indirectly import *why.
+			marked := make(map[string]bool)
+			for pkg := range allPkgs {
+				if whyMatch(pkg) {
+					markImporters(pkg, allPkgs, marked)
+				}
+			}
+			for pkg := range allPkgs {
+				if !marked[pkg] {
+					delete(allPkgs, pkg)
+				}
 			}
 		}
 	}
@@ -108,16 +122,35 @@ func main() {
 	for name := range allPkgs {
 		result = append(result, name)
 	}
+	w := bufio.NewWriter(os.Stdout)
+	defer w.Flush()
 	sort.Strings(result)
 	for _, r := range result {
-		if *from {
+		switch {
+		case *files:
+			pkg, _ := build.Default.Import(r, cwd, 0)
+			showFiles(w, pkg, pkg.GoFiles)
+			showFiles(w, pkg, pkg.CgoFiles)
+			if rootPkgs[pkg.ImportPath] && !*noTestDeps {
+				// It's a package specified directly on the command line.
+				// Show its test files too.
+				showFiles(w, pkg, pkg.TestGoFiles)
+				showFiles(w, pkg, pkg.XTestGoFiles)
+			}
+		case *from:
 			from := allPkgs[r]
 			sort.Strings(from)
 			from = uniq(from)
-			fmt.Printf("%s %s\n", r, strings.Join(from, " "))
-		} else {
-			fmt.Println(r)
+			fmt.Fprintf(w, "%s %s\n", r, strings.Join(from, " "))
+		default:
+			fmt.Fprintln(w, r)
 		}
+	}
+}
+
+func showFiles(w io.Writer, pkg *build.Package, fs []string) {
+	for _, f := range fs {
+		fmt.Fprintln(w, filepath.Join(pkg.Dir, f))
 	}
 }
 
