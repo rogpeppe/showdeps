@@ -186,10 +186,16 @@ func isStdlib(pkg string) bool {
 // findImports recursively adds all imported packages of given
 // package (packageName) to allPkgs map.
 func findImports(packageName string, allPkgs map[string][]string, rootPkgs map[string]bool) error {
+	return findImportsDir(packageName, cwd, allPkgs, rootPkgs)
+}
+
+// findImportsDir recursively adds all imported packages of given package
+// (packageName) when imported from dir to allPkgs map.
+func findImportsDir(packageName, dir string, allPkgs map[string][]string, rootPkgs map[string]bool) error {
 	if packageName == "C" {
 		return nil
 	}
-	pkg, err := build.Default.Import(packageName, cwd, 0)
+	pkg, err := build.Default.Import(packageName, dir, 0)
 	if err != nil {
 		return fmt.Errorf("cannot find %q: %v", packageName, err)
 	}
@@ -201,7 +207,7 @@ func findImports(packageName string, allPkgs map[string][]string, rootPkgs map[s
 		alreadyDone := allPkgs[name] != nil
 		allPkgs[name] = append(allPkgs[name], pkg.ImportPath)
 		if *all && !alreadyDone {
-			if err := findImports(name, allPkgs, rootPkgs); err != nil {
+			if err := findImportsDir(name, pkg.Dir, allPkgs, rootPkgs); err != nil {
 				return err
 			}
 		}
