@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"go/build"
 	"io"
 	"log"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/kisielk/gotool"
+	"github.com/rogpeppe/godeps/build"
 )
 
 var (
@@ -56,6 +56,20 @@ including their test files unless the -T flag is provided.
 
 var cwd string
 
+var (
+	buildContext = func() build.Context {
+		ctx := build.Default
+		ctx.MatchTag = func(tag string, neg bool) bool {
+			if build.KnownOS(tag) || build.KnownArch(tag) {
+				return true
+			}
+			// Fall back to default settings for all other tags.
+			return ctx.DefaultMatchTag(tag) != neg
+		}
+		return ctx
+	}()
+)
+
 func main() {
 	flag.Usage = func() {
 		os.Stderr.WriteString(helpMessage)
@@ -84,7 +98,7 @@ func main() {
 	pkgs = gotool.ImportPaths(pkgs)
 	rootPkgs := make(map[string]bool)
 	for _, pkg := range pkgs {
-		p, err := build.Default.Import(pkg, cwd, build.FindOnly)
+		p, err := buildContext.Import(pkg, cwd, build.FindOnly)
 		if err != nil {
 			log.Fatalf("cannot find %q: %v", pkg, err)
 		}
@@ -93,7 +107,7 @@ func main() {
 
 	allPkgs := make(map[string][]string)
 	for _, pkg := range pkgs {
-		if err := findImports(pkg, allPkgs, rootPkgs); err != nil {
+		if err := findImports(pkg, cwd, allPkgs, rootPkgs); err != nil {
 			log.Fatalf("cannot find imports from %q: %v", pkg, err)
 		}
 	}
@@ -128,7 +142,7 @@ func main() {
 	for _, r := range result {
 		switch {
 		case *files:
-			pkg, _ := build.Default.Import(r, cwd, 0)
+			pkg, _ := buildContext.Import(r, cwd, 0)
 			showFiles(w, pkg, pkg.GoFiles)
 			showFiles(w, pkg, pkg.CgoFiles)
 			if rootPkgs[pkg.ImportPath] && !*noTestDeps {
@@ -185,11 +199,11 @@ func isStdlib(pkg string) bool {
 
 // findImports recursively adds all imported packages of given
 // package (packageName) to allPkgs map.
-func findImports(packageName string, allPkgs map[string][]string, rootPkgs map[string]bool) error {
+func findImports(packageName, dir string, allPkgs map[string][]string, rootPkgs map[string]bool) error {
 	if packageName == "C" {
 		return nil
 	}
-	pkg, err := build.Default.Import(packageName, cwd, 0)
+	pkg, err := buildContext.Import(packageName, dir, 0)
 	if err != nil {
 		return fmt.Errorf("cannot find %q: %v", packageName, err)
 	}
@@ -201,7 +215,7 @@ func findImports(packageName string, allPkgs map[string][]string, rootPkgs map[s
 		alreadyDone := allPkgs[name] != nil
 		allPkgs[name] = append(allPkgs[name], pkg.ImportPath)
 		if *all && !alreadyDone {
-			if err := findImports(name, allPkgs, rootPkgs); err != nil {
+			if err := findImports(name, pkg.Dir, allPkgs, rootPkgs); err != nil {
 				return err
 			}
 		}
