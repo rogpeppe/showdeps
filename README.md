@@ -32,13 +32,13 @@ The `-from` flag shows *why* each dependency is included by printing,
 along with each package, the list of packages that depend on it.
 
 The `-why` flag can be used to explore just why a particular package has
-been included in the result - it will prune the results to only those
-packages which lie between the command-line-specified packages and the
-named package. This isn't much use unless you're doing it recursively
-or you don't print the `-from` results, so `-why` implies both `-a` and
-`-from`.
+been included in the result. By default, it shows a single dependency chain
+(a sequence of package names that import each other) from
+the listed packages to any package matched by the `=why` argument.
+If the -a flag is provided, it instead prints all packages
+that are part of any of those chains in `-from` style.
 
-Finally, the `-f` flag causes all the Go source files to be printed.
+Finally, the `-f` flag causes all the Go source file names to be printed.
 Since this is usually for whole-program greps or analysis, this also
 includes the source files in the packages specified on the command line.
 
@@ -61,9 +61,7 @@ the current directory and their dependencies.
 
 	$ showdeps -a -f ./... | xargs cat | wc -l
 
-Find out why net/http indirectly imports crypto/x509/pkix:
+Find out one reason why net/http indirectly imports crypto/x509/pkix:
 
-	$ showdeps -T  -why crypto/x509/pkix -stdlib net/http
-	crypto/tls net/http
-	crypto/x509 crypto/tls
-	crypto/x509/pkix crypto/x509
+	$ showdeps -T  -why crypto/x509/pkix net/http
+	net/http crypto/tls crypto/x509 crypto/x509/pkix
