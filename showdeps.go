@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +24,8 @@ var (
 	files      = flag.Bool("f", false, "list Go source files instead of packages (overrides -from and -why)")
 	maxChain   = flag.Int("n", 1, "max number of dependencies to print with -why (0 implies unlimited)")
 )
+
+var exitCode = 0
 
 var whyMatch func(string) bool
 
@@ -90,7 +91,7 @@ func main() {
 		pkgs = []string{"."}
 	}
 	if d, err := os.Getwd(); err != nil {
-		log.Fatalf("cannot get working directory: %v", err)
+		fatalf("cannot get working directory: %v", err)
 	} else {
 		cwd = d
 	}
@@ -115,14 +116,14 @@ func main() {
 	for _, pkg := range pkgs {
 		p, err := buildContext.Import(pkg, cwd, build.FindOnly)
 		if err != nil {
-			log.Fatalf("cannot find %q: %v", pkg, err)
+			fatalf("cannot find %q: %v", pkg, err)
 		}
 		rootPkgs[p.ImportPath] = true
 	}
 	allPkgs := make(map[string][]string)
 	for pkg := range rootPkgs {
 		if err := findImports(pkg, cwd, recur, allPkgs, rootPkgs); err != nil {
-			log.Fatalf("cannot find imports from %q: %v", pkg, err)
+			fatalf("cannot find imports from %q: %v", pkg, err)
 		}
 	}
 	if !*files {
@@ -156,7 +157,7 @@ func main() {
 	sort.Strings(result)
 	if *why != "" && !showAllWhy {
 		showNReasonsWhy(w, allPkgs, rootPkgs)
-		return
+		os.Exit(exitCode)
 	}
 	for _, r := range result {
 		switch {
@@ -179,6 +180,7 @@ func main() {
 			fmt.Fprintln(w, r)
 		}
 	}
+	os.Exit(exitCode)
 }
 
 // showNReasonsWhy shows up to maxChain lines for each package in the initial packages, each line showing
@@ -282,7 +284,8 @@ func findImports(packageName, dir string, recur bool, allPkgs map[string][]strin
 	}
 	pkg, err := buildContext.Import(packageName, dir, 0)
 	if err != nil {
-		return fmt.Errorf("cannot find %q: %v", packageName, err)
+		warningf("warning: cannot find %q: %v", packageName, err)
+		return nil
 	}
 	allPkgs[pkg.ImportPath] = allPkgs[pkg.ImportPath] // ensure the package has an entry.
 	for name := range imports(pkg, rootPkgs[pkg.ImportPath]) {
@@ -334,4 +337,14 @@ func matchPattern(pattern string) func(name string) bool {
 	return func(name string) bool {
 		return reg.MatchString(name)
 	}
+}
+
+func fatalf(f string, a ...interface{}) {
+	fmt.Fprintf(os.Stderr, "showdeps: %s", fmt.Sprintf(f, a...))
+	os.Exit(1)
+}
+
+func warningf(f string, a ...interface{}) {
+	exitCode = 1
+	fmt.Fprintf(os.Stderr, "showdeps: warning: %s", fmt.Sprintf(f, a...))
 }
