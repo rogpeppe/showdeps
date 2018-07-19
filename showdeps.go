@@ -80,6 +80,10 @@ var (
 )
 
 func main() {
+	os.Exit(main1())
+}
+
+func main1() int {
 	flag.Usage = func() {
 		os.Stderr.WriteString(helpMessage)
 		flag.PrintDefaults()
@@ -155,9 +159,9 @@ func main() {
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
 	sort.Strings(result)
-	if *why != "" && !showAllWhy {
+	if *why != "" && !showAllWhy && !*files {
 		showNReasonsWhy(w, allPkgs, rootPkgs)
-		os.Exit(exitCode)
+		return exitCode
 	}
 	for _, r := range result {
 		switch {
@@ -180,7 +184,7 @@ func main() {
 			fmt.Fprintln(w, r)
 		}
 	}
-	os.Exit(exitCode)
+	return exitCode
 }
 
 // showNReasonsWhy shows up to maxChain lines for each package in the initial packages, each line showing
@@ -288,7 +292,9 @@ func findImports(packageName, dir string, recur bool, allPkgs map[string][]strin
 		return nil
 	}
 	allPkgs[pkg.ImportPath] = allPkgs[pkg.ImportPath] // ensure the package has an entry.
-	for name := range imports(pkg, rootPkgs[pkg.ImportPath]) {
+	// Iterate through the imports in sorted order so that we provide
+	// deterministic results.
+	for _, name := range sorted(imports(pkg, rootPkgs[pkg.ImportPath])) {
 		if !*std && isStdlib(name) {
 			continue
 		}
@@ -347,4 +353,13 @@ func fatalf(f string, a ...interface{}) {
 func warningf(f string, a ...interface{}) {
 	exitCode = 1
 	fmt.Fprintf(os.Stderr, "showdeps: warning: %s", fmt.Sprintf(f, a...))
+}
+
+func sorted(m map[string]bool) []string {
+	s := make([]string, 0, len(m))
+	for x := range m {
+		s = append(s, x)
+	}
+	sort.Strings(s)
+	return s
 }
